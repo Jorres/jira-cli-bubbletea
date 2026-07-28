@@ -100,7 +100,8 @@ func (sl *SprintList) RenderInTable() error {
 
 // renderPlain renders the issue in plain view.
 func (sl *SprintList) renderPlain(w io.Writer) error {
-	return renderPlain(w, sl.tableData())
+	// sprint view supports only \t as delimiter, not custom.
+	return renderPlain(w, sl.tableData(), "\t")
 }
 
 func (sl *SprintList) data() []tui.PreviewData {
@@ -191,7 +192,7 @@ func (sl *SprintList) tableData() tui.TableData {
 	var data tui.TableData
 
 	headers := sl.tableHeader()
-	if !(sl.Display.Plain && sl.Display.NoHeaders) {
+	if !sl.Display.Plain || !sl.Display.NoHeaders {
 		data = append(data, headers)
 	}
 	if len(headers) == 0 {

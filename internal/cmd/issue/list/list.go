@@ -50,6 +50,9 @@ $ jira issue list --plain --columns key,assignee,status
 # List issues in a plain table view and show all fields
 $ jira issue list --plain --no-truncate
 
+# List issues in a plain table view using custom delimiter (default is "\t")
+$ jira issue list --plain --delimeter "|"
+
 # List issues as raw JSON data
 $ jira issue list --raw
 
@@ -84,6 +87,7 @@ func List(cmd *cobra.Command, args []string) {
 func loadList(cmd *cobra.Command, args []string) {
 	server := viper.GetString("server")
 	project := viper.GetString("project.key")
+	numComments := viper.GetUint("num_comments")
 
 	debug, err := cmd.Flags().GetBool("debug")
 	cmdutil.ExitIfError(err)
@@ -95,35 +99,35 @@ func loadList(cmd *cobra.Command, args []string) {
 	cmdutil.ExitIfError(err)
 
 	if len(args) > 0 {
-		searchQuery := fmt.Sprintf(`text ~ "%s"`, strings.Join(args, " "))
+		searchQuery := fmt.Sprintf(`text ~ %q`, strings.Join(args, " "))
 
 		jqlFlag, err := cmd.Flags().GetString("jql")
 		cmdutil.ExitIfError(err)
-		if len(jqlFlag) > 0 {
+		if jqlFlag != "" {
 			searchQuery = fmt.Sprintf(`%s AND %s`, jqlFlag, searchQuery)
 		}
 		cmdutil.ExitIfError(cmd.Flags().Set("jql", searchQuery))
 	}
 
-	issues, total, err := func() ([]*jira.Issue, int, error) {
+	issues, err := func() ([]*jira.Issue, error) {
 		s := cmdutil.Info("Fetching issues...")
 		defer s.Stop()
 
 		q, err := query.NewIssue(project, cmd.Flags())
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 
 		resp, err := api.ProxySearch(api.DefaultClient(debug), q.Get(), q.Params().From, q.Params().Limit)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 
-		return resp.Issues, resp.Total, nil
+		return resp.Issues, nil
 	}()
 	cmdutil.ExitIfError(err)
 
-	if total == 0 {
+	if len(issues) == 0 {
 		fmt.Println()
 		cmdutil.Failed("No result found for given query in project %q", project)
 		return
@@ -140,6 +144,12 @@ func loadList(cmd *cobra.Command, args []string) {
 	plain, err := cmd.Flags().GetBool("plain")
 	cmdutil.ExitIfError(err)
 
+	delimiter, err := cmd.Flags().GetString("delimiter")
+	cmdutil.ExitIfError(err)
+
+	csv, err := cmd.Flags().GetBool("csv")
+	cmdutil.ExitIfError(err)
+
 	noHeaders, err := cmd.Flags().GetBool("no-headers")
 	cmdutil.ExitIfError(err)
 
@@ -152,19 +162,29 @@ func loadList(cmd *cobra.Command, args []string) {
 	columns, err := cmd.Flags().GetString("columns")
 	cmdutil.ExitIfError(err)
 
+	var comments uint
+	if cmd.Flags().Changed("comments") {
+		comments, err = cmd.Flags().GetUint("comments")
+		cmdutil.ExitIfError(err)
+	} else {
+		comments = max(numComments, 1)
+	}
+
 	v := view.IssueList{
 		Project: project,
 		Server:  server,
-		Total:   total,
 		Data:    issues,
 		Refresh: func() {
 			loadList(cmd, args)
 		},
 		Display: view.DisplayFormat{
 			Plain:        plain,
+			Delimiter:    delimiter,
+			CSV:          csv,
 			NoHeaders:    noHeaders,
 			NoTruncate:   noTruncate,
 			FixedColumns: fixedColumns,
+			Comments:     comments,
 			Columns: func() []string {
 				if columns != "" {
 					return strings.Split(columns, ",")
@@ -222,7 +242,10 @@ func SetFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("plain", false, "Display output in plain mode")
 	cmd.Flags().Bool("no-headers", false, "Don't display table headers in plain mode. Works only with --plain")
 	cmd.Flags().Bool("no-truncate", false, "Show all available columns in plain mode. Works only with --plain")
+	cmd.Flags().String("delimiter", "\t", "Custom delimeter for columns in plain mode. Works only with --plain")
+	cmd.Flags().Uint("comments", 1, "Show N comments when viewing the issue")
 	cmd.Flags().Bool("raw", false, "Print raw JSON output")
+	cmd.Flags().Bool("csv", false, "Print output in CSV format")
 
 	if cmd.HasParent() && cmd.Parent().Name() != "sprint" {
 		cmd.Flags().String("columns", "", "Comma separated list of columns to display in the plain mode.\n"+

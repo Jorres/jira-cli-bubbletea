@@ -16,17 +16,19 @@ import (
 // DisplayFormat is a issue display type.
 type DisplayFormat struct {
 	Plain        bool
+	Delimiter    string
+	CSV          bool
 	NoHeaders    bool
 	NoTruncate   bool
 	Columns      []string
 	FixedColumns uint
+	Comments     uint
 	TableStyle   tui.TableStyle
 	Timezone     string
 }
 
 // IssueList is a list view for issues.
 type IssueList struct {
-	Total      int
 	Project    string
 	Server     string
 	Data       []*jira.Issue
@@ -37,9 +39,20 @@ type IssueList struct {
 
 // Render renders the view.
 func (l *IssueList) Render() error {
+	// Prioritize CSV format when explicitly requested
+	if l.Display.CSV {
+		w := os.Stdout
+		return l.renderCSV(w)
+	}
+
 	if l.Display.Plain || tui.IsDumbTerminal() || tui.IsNotTTY() {
+		// custom delimiter is used only in plain mode, otherwise \t is used
+		delimeter := "\t"
+		if l.Display.Plain {
+			delimeter = l.Display.Delimiter
+		}
 		w := tabwriter.NewWriter(os.Stdout, 0, tabWidth, 1, '\t', 0)
-		return l.renderPlain(w)
+		return l.renderPlain(w, delimeter)
 	}
 
 	renderer, err := MDRenderer()
@@ -49,7 +62,7 @@ func (l *IssueList) Render() error {
 
 	data := l.data()
 	if l.FooterText == "" {
-		l.FooterText = fmt.Sprintf("Showing %d of %d results for project %q", len(data)-1, l.Total, l.Project)
+		l.FooterText = fmt.Sprintf("Showing %d results for project %q", len(data)-1, l.Project)
 	}
 
 	view := tui.NewTable(
@@ -57,17 +70,17 @@ func (l *IssueList) Render() error {
 		tui.WithTableFooterText(l.FooterText),
 		tui.WithTableHelpText(tableHelpText),
 		tui.WithSelectedFunc(navigate(l.Server)),
-		tui.WithViewModeFunc(func(r, c int, _ interface{}) (func() interface{}, func(interface{}) (string, error)) {
-			dataFn := func() interface{} {
+		tui.WithViewModeFunc(func(r, c int, _ any) (func() any, func(any) (string, error)) {
+			dataFn := func() any {
 				ci := data.GetIndex(fieldKey)
-				iss, _ := api.ProxyGetIssue(api.DefaultClient(false), data.Get(r, ci), issue.NewNumCommentsFilter(1))
+				iss, _ := api.ProxyGetIssue(api.DefaultClient(false), data.Get(r, ci), issue.NewNumCommentsFilter(l.Display.Comments))
 				return iss
 			}
-			renderFn := func(i interface{}) (string, error) {
+			renderFn := func(i any) (string, error) {
 				iss := Issue{
 					Server:  l.Server,
 					Data:    i.(*jira.Issue),
-					Options: IssueOption{NumComments: 1},
+					Options: IssueOption{NumComments: l.Display.Comments},
 				}
 				return iss.RenderedOut(renderer)
 			}
@@ -123,8 +136,13 @@ func (l *IssueList) Render() error {
 }
 
 // renderPlain renders the issue in plain view.
-func (l *IssueList) renderPlain(w io.Writer) error {
-	return renderPlain(w, l.data())
+func (l *IssueList) renderPlain(w io.Writer, delimeter string) error {
+	return renderPlain(w, l.data(), delimeter)
+}
+
+// renderCSV renders issues in csv format.
+func (l *IssueList) renderCSV(w io.Writer) error {
+	return renderCSV(w, l.data())
 }
 
 func (*IssueList) validColumnsMap() map[string]struct{} {
@@ -176,11 +194,8 @@ func (l *IssueList) data() tui.TableData {
 	var data tui.TableData
 
 	headers := l.header()
-	if !(l.Display.Plain && l.Display.NoHeaders) {
+	if (!l.Display.Plain && !l.Display.CSV) || !l.Display.NoHeaders {
 		data = append(data, headers)
-	}
-	if len(headers) == 0 {
-		headers = ValidIssueColumns()
 	}
 	for _, iss := range l.Data {
 		data = append(data, l.assignColumns(headers, iss))

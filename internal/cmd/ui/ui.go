@@ -159,7 +159,7 @@ func MakeFetcherFromTabConfig(project string, baseFlags query.FlagParser, tabCon
 				return nil, 0, err
 			}
 
-			return resp.Issues, resp.Total, nil
+			return resp.Issues, len(resp.Issues), nil
 		}()
 
 		cmdutil.ExitIfError(err)
@@ -188,7 +188,7 @@ func MakeFetcherFromQuery(q *query.Issue, debug bool) func() ([]*jira.Issue, int
 			// 		resp, err = client.EpicIssues(key, q.Get(), q.Params().From, q.Params().Limit)
 			// 	}
 
-			return resp.Issues, resp.Total, nil
+			return resp.Issues, len(resp.Issues), nil
 		}()
 
 		cmdutil.ExitIfError(err)
