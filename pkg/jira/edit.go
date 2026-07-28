@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -51,6 +52,7 @@ type EditRequest struct {
 	// CustomFields holds all custom fields passed
 	// while editing the issue.
 	CustomFields map[string]string
+	SkipNotify   bool
 
 	configuredCustomFields []IssueTypeField
 }
@@ -111,7 +113,12 @@ func (c *Client) EditV2(key string, req *EditRequest) error {
 		return err
 	}
 
-	res, err := c.PutV2(context.Background(), "/issue/"+key, body, Header{
+	endpoint := "/issue/" + key
+	if req.SkipNotify {
+		endpoint += "?notifyUsers=false"
+	}
+
+	res, err := c.PutV2(context.Background(), endpoint, body, Header{
 		"Accept":       "application/json",
 		"Content-Type": "application/json",
 	})
@@ -228,7 +235,7 @@ type editUpdate struct {
 	Priority []struct {
 		Set struct {
 			Name string `json:"name,omitempty"`
-		} `json:"set,omitempty"`
+		} `json:"set"`
 	} `json:"priority,omitempty"`
 	Labels []struct {
 		Add    string `json:"add,omitempty"`
@@ -288,11 +295,11 @@ func (cfm *editUpdateMarshaler) MarshalJSON() ([]byte, error) {
 		return m, err
 	}
 
-	var temp interface{}
+	var temp any
 	if err := json.Unmarshal(m, &temp); err != nil {
 		return nil, err
 	}
-	dm := temp.(map[string]interface{})
+	dm := temp.(map[string]any)
 
 	return json.Marshal(dm)
 }
@@ -304,16 +311,13 @@ func (cfm *editFieldsMarshaler) MarshalJSON() ([]byte, error) {
 		return m, err
 	}
 
-	var temp interface{}
+	var temp any
 	if err := json.Unmarshal(m, &temp); err != nil {
 		return nil, err
 	}
-	dm := temp.(map[string]interface{})
+	dm := temp.(map[string]any)
 
-	for key, val := range cfm.M.customFields {
-		dm[key] = val
-	}
-
+	maps.Copy(dm, cfm.M.customFields)
 	return json.Marshal(dm)
 }
 
@@ -367,7 +371,7 @@ func getRequestDataForEdit(req *EditRequest) *editRequest {
 		Priority: []struct {
 			Set struct {
 				Name string `json:"name,omitempty"`
-			} `json:"set,omitempty"`
+			} `json:"set"`
 		}{{Set: struct {
 			Name string `json:"name,omitempty"`
 		}{Name: req.Priority}}},
